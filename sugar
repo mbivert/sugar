@@ -1,0 +1,244 @@
+#!/bin/sh
+
+set -e
+
+# Failure procedure.
+#
+# Input:
+#	$@ : error message
+# Output:
+#	Terminate program
+fail() {
+	echo failure: $@ 1>&2
+	exit 1
+}
+
+# Default ssh binary
+ssh=ssh
+
+# Dependencies
+if ! which $ssh >/dev/null; then fail "$ssh not in "'$PATH'; fi
+
+# Default remote root user/group
+if [ -z "$ROOT"    ]; then ROOT=root:wheel; fi
+
+# Default ssh config for sugar (ssh_config(5) format)
+if [ -z "$SUGARF"  ]; then SUGARF=$HOME/.sugarf; fi
+
+# Default (remote) sugar directory
+if [ -z "$SUGARD"  ]; then SUGARD=/var/sugard; fi
+
+# Default local sugar directory
+if [ -z "$LSUGARD" ]; then LSUGARD=$HOME/.sugard; fi
+
+# Display help.
+#
+# Input:
+#	$1 : exit code
+# Output:
+#	Terminate program
+help() {
+	echo 'sugar [-mspqh] [-d flags] [-r user:group] [-c conf] <server> <cmd> [args...]'
+	exit $1
+}
+
+match=
+sync=
+prehook=
+DEBUG=
+conf=
+while getopts mspqhd:r:c: x; do
+	case $x in
+		m) match=1;;
+		s) sync=1;;
+		p) prehook=1;;
+		q) posthook=1;;
+		h) help 0;;
+		d) DEBUG="$OPTARG";;
+		r) ROOT="$OPTARG";;
+		c) conf="OPTARG";;
+	esac
+done
+shift `expr $OPTIND - 1`
+
+# If a configuration file is specified, source it
+if [ -n "$conf" ]; then . $conf; fi
+
+# Use default if possible
+if [ -n "$SUGARF"  ] && [ ! -r $SUGARF  ]; then
+	fail "\$SUGARF=$SUGARF is not readable"
+fi
+if [ ! -d $LSUGARD ]; then
+	fail "\$LSUGARD=$LSUGARD is not a directory"
+fi
+
+# ssh(1) should use proper ssh config if specified
+if [ -n "$SUGARF" ]; then ssh="$ssh -F $SUGARF"; fi
+
+# enable ssh connection sharing
+ssh="$ssh -M"
+
+# Have them available to hooks
+export SUGARF LSUGARD DEBUG
+
+# Run hooks
+#
+# Input:
+#	$1 : pre|post
+#	$2 : command
+#	$3 : server alias
+#	$4 : server raw   directory
+#	$5 : server ready directory
+# Output:
+hook() {
+	if [ -x $5/bin/hook-$1-$2 ]; then
+		PATH=$5/bin:$PATH $5/bin/hook-$1-$2 $3 $4 $5
+	fi
+}
+
+# Run main hooks
+#
+# Input:
+#	$1 : pre|post
+#	$2 : server alias
+#	$3 : server raw   directory
+#	$4 : server ready directory
+# Output:
+mainhook() {
+	if [ -x "$3/$1-hook" ]; then $3/$1-hook $2 $3 $4; fi
+}
+
+# List all servers matching $1 as an awk(1) regular
+# expression if -m has been specified; otherwise display
+# $1.
+#
+# Input:
+#	$1 : server name|regexp
+# Output:
+#	Matching servers, one per line
+lsmatches() {
+	if [ -z "$match" ]; then
+		echo $1
+	else
+		awk '$1 == "Host" && $2 ~ /'"$1"'/ { print $2 }' $SUGARF
+	fi
+}
+
+# Create ready directory for given server.
+#
+# NOTE: conceptually, this is a (special) main pre-hook,
+# but we "need" it to be managed here so as to provide
+# a reasonable default behavior; sugar.imports or sugar.mkautos
+# are optional conveniences.
+#
+# NOTE: the $SUGARD/bin/ directory is a **special** location,
+# that should only contain scripts to be remotely executed through
+# sugar(1). Don't automatically store data here from pre-hooks
+# as they will be erased. Just store them elsewhere and/or
+# use sugar.imports. More generally, don't store there things
+# that will to be executed outside of sugar(1).
+#
+# Input:
+#	$1 : server raw   directory
+#	$2 : server ready directory
+# Output:
+mkready() {
+	mkdir -p $2
+	rsync -a -zz --delete $1/bin/ $2/bin/
+	chmod +x $2/bin/*
+}
+
+# Synchronize between local ready directory and remote/chroot one for single server.
+#
+# Input:
+#	$1 : server alias
+#	$2 : server raw   directory
+#	$3 : server ready directory
+# Output:
+sync1() {
+	rsync --chown $ROOT -e "$ssh" -a -zz --delete-after --delete $3/ $1:$SUGARD/
+}
+
+# Run a command on remote server/chrooted system.
+#
+# Input:
+#	$1      : server name
+#	$2, ... : command to execute and its arguments
+# Output:
+run() {
+	s=$1; shift
+	$ssh $s DEBUG=$DEBUG SUGARD=$SUGARD SUGARN=$s PATH=$SUGARD/bin:'$PATH' $@
+}
+
+# Get pattern/server name
+if [ -z "$1" ] || [ -z "$2" ]; then help 1; fi
+p="$1"; shift
+
+# Run main hook and pre-hook for given command
+#
+# Input:
+#	$1 : command
+#	$2 : server alias
+#	$3 : server raw   directory
+#	$4 : server ready directory
+# Output:
+prehooks() {
+	mainhook pre     $2 $3 $4
+	hook     pre  $1 $2 $3 $4
+}
+
+# Run post-hook for given command and main post-hook.
+#
+# Input:
+#	$1 : command
+#	$2 : server alias
+#	$3 : server raw   directory
+#	$4 : server ready directory
+# Output:
+posthooks() {
+	hook     post $1 $2 $3 $4
+	mainhook post    $2 $3 $4
+}
+
+lsmatches "$p" | while read s; do
+	ready=$LSUGARD/ready/$s
+	raw=$LSUGARD/raw/$s
+
+	# Create/update ready directory from raw directory
+	mkready $raw $ready
+
+	# Only execute pre/post hooks
+	if [ -n "$prehook" ] && [ -n "$posthook" ]; then
+		prehooks  $1 $s $raw $ready
+		posthooks $1 $s $raw $ready
+		continue
+	fi
+
+	# Only execute post-hooks
+	if [ -n "$posthook" ]; then
+		posthooks $1 $s $raw $ready
+		continue
+	fi
+
+	# Run pre-hooks
+	prehooks $1 $s $raw $ready
+
+	# Only execute pre-hooks.
+	if [ -n "$prehook" ]; then
+		continue
+	fi
+
+	# Perform synchronisation if specified
+	if [ -n "$sync" ]; then
+		sync1 $s $raw $ready
+	fi
+
+	# Run the command on the given server
+	run $s $@
+
+	# Run post-hooks
+	posthooks $1 $s $raw $ready
+done
+
+# Make it visually clear that everything went fine.
+echo OK

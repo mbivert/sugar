@@ -1,0 +1,64 @@
+#!/bin/sh
+
+set -e
+
+# .auto scripts management, as linear combinations of other
+# scripts.
+
+
+# Create a single automatic script/hook
+#
+# Input:
+#	/dev/stdin : files to include in the script/hook, one fn per line
+#	$1         : directory where to create script/hook
+#	$2         : script|hook's basename
+# Output:
+mkauto1() {
+	cat <<'EOF' > $1/$2
+#!/bin/sh
+
+set -e
+
+if echo "$DEBUG" | grep -q x; then set -x; fi
+
+EOF
+
+	while read x; do
+		if [ -f "$1/$x" ]; then echo $x '$@' >> $1/$2; fi
+	done
+}
+
+# Create automatic script and related hooks.
+#
+# Input:
+#	$1 : .auto file
+#	$2 : bin/ directory where to create auto script/hooks
+# Output:
+#	Automatic script and related hooks created in $2
+mkauto() {
+	n=`basename $1 .auto`
+
+	sed 's/^/hook-pre-/'  $1 | mkauto1 $2 hook-pre-$n
+	cat $1                   | mkauto1 $2 $n
+	sed 's/^/hook-post-/' $1 | mkauto1 $2 hook-post-$n
+
+	chmod +x $2/hook-pre-$n $2/$n $2/hook-post-$n
+}
+
+# Create all automatic scripts if any.
+#
+# Input:
+#	$1 : server raw   directory
+#	$2 : server ready directory
+# Output:
+#	Automatic scripts/hooks created in $2/bin
+mkautos() {
+	for x in $1/*.auto; do
+		# No match
+		if [ ! -f "$x" ]; then break; fi
+		mkauto $x $2/bin
+	done
+}
+
+# $1 is (unused) server alias
+mkautos $2 $3

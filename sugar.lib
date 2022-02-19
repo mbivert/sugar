@@ -1,0 +1,230 @@
+#!/bin/sh
+
+set -e
+
+if echo $DEBUG | grep -q 'x'; then set -x; fi
+
+# Log input to stderr and exit
+#
+# Input:
+#	$@ : error message
+# Output:
+fail() {
+	echo error: $@ 1>&2
+	exit 1
+}
+
+# Log some data, prefix it with current script name, to stdout
+#
+# Input:
+#	$0 : script's name
+#	$* : data to log
+# Output:
+log() {
+	n=`basename $0`
+	printf "%-40s: %s\n" "$n" "$*"
+}
+
+# Log some data, prefix it with current script name, to stderr
+#
+# NOTE: typically useful for $DEBUG
+#
+# Input:
+#	$0 : script's name
+#	$* : data to log
+# Output:
+logerr() {
+	log $@ 1>&2
+}
+
+# Quietly run given command; in case of error,
+# output everything and exit
+#
+# Input:
+#	$* : command to run
+quietrun() {
+	fn=/tmp/quietrun.$$
+	if ! $* > $fn 2>&1; then cat $fn; rm $fn; exit 1; fi
+	rm $fn
+}
+
+# Assert that argument is a directory.
+#
+# Input:
+#	$1 : path to check
+# Output:
+#	Exit on error
+assertdir() {
+	if [ ! -d "$1" ]; then
+		fail "'$1' is not a directory"
+	fi
+}
+
+# Assert user exists with given uid/gid/home/shell.
+#
+# Input:
+#	$1 : user name
+#	$2 : uid
+#	$3 : gid
+#	$4 : home directory
+#	$5 : shell
+# Output:
+#	Exit on error
+assertuser() {
+	fail "Not implemented"
+}
+
+# Assert group exists with given gid
+#
+# Input:
+#	$1 : group name
+#	$2 : gid
+# Output:
+#	Exit on error
+assertgroup() {
+	fail "Not implemented"
+}
+
+# Create backup opened ssh link
+#
+# Input:
+#	$1 : tmux session name
+#	$2 : server name
+mksshlink() {
+	if tmux list-sessions | grep -q '^'$1; then
+		tmux kill-session -t $1
+	fi
+	tmux new-session -d -s $1 ssh $2
+}
+
+# Close backup ssh link
+#
+# Input:
+#	$1 : tmux session name
+rmsshlink() {
+	tmux kill-session -t $1
+}
+
+# Ensure given URL is available with given http code.
+#
+# Input:
+#	$1 : URL to check
+#	$2 : expected http code (e.g. 200, 404)
+#	$3 : optional curl(1) arguments
+# Output:
+checkurl() {
+	x=`curl -A "curl-sugar-tests" $3 -s -I $1 | sed 1q`
+	if ! echo "$x" | grep -q "$2"; then
+		fail "checkurl $1 : got '$x'; expected '$2'"
+	fi
+}
+
+# Retrieve TLS certificate owner for tls given domain,
+# assuming connection on 443 port.
+#
+# Input:
+#	$1 : domain (e.g. mbivert.eu)
+# Output:
+#	issuer data
+gettlsissuer() {
+#	curl -A "curl-sugar-tests" --insecure -vvI https://$1 2>&1 | grep '^\*  issuer:'
+	openssl s_client -showcerts -connect $1:443 2>&1 | grep '^issuer'
+}
+
+# Ensure we have 3 non-empty arguments for hooks.
+#
+# Input:
+#	$@ : script's $@
+# Output:
+checkhookargs() {
+	if [ -z "$3" ]; then
+		fail $0 '<server alias> <rawdir> <readydir>'
+	fi
+}
+
+# Load (source) OS-specific sugar.lib.`uname` if
+# it exists in $PATH.
+#
+# Input:
+# Output:
+loadoslib() {
+	if which sugar.lib.`uname` >/dev/null 2>/dev/null; then
+		. $(which sugar.lib.`uname`)
+	fi
+}
+
+# Load configuration files
+#
+# Input:
+#	$1 : directory containing the config.* and config files,
+#	     typically a ready/ directory for hooks, thus after
+#	     sugar.imports has pushed here some configs, or $SUGARD
+#	     on remote locations, which is the default value.
+# Output:
+loadconfs() {
+	if [ -z "$1" ]; then set -- "$SUGARD"; fi
+
+	for x in $1/config.*; do
+		# globbing failure, mostly
+		if [ -r "$x" ]; then . $x; fi
+	done
+	if [ -r "$1/config" ]; then . "$1/config"; fi
+}
+
+# Process a template configuration file
+# from the configuration variables defined
+# in the config files.
+#
+# NOTE: %%VAR%% is substitued by $VAR's value,
+# with $VAR taken from the environment. config* files
+# are loaded in the environment.
+#
+# NOTE: perhaps we should fork to avoid polluting the
+# environment?
+#
+# Input:
+#	$1 : directory containing the config.* and config files,
+#	     typically a ready/ directory, after sugar.imports has
+#	     stored there imported configuration files.
+#	$2 : configuration file to process
+# Output:
+#	$2 templatized with the value from $2/config*
+samurai() {
+	set -a; loadconfs $1; set +a
+
+	dbg=cat
+	if echo "$DEBUG" | grep -q 'd'; then
+		dbg="tee /dev/stderr"
+		logerr Processing $2...
+	fi
+
+	# Print stuff until we find a %%; look for a second %%;
+	# replace %%stuff%% by $stuff from ENVIRON. Loop.
+	awk '/%%/ { for (s = $0;;) {
+		# Look for opening %%
+		n = index(s, "%%")
+		if (n == 0) {
+			printf("%s\n", s);
+			break;
+		}
+
+		printf("%s", substr(s, 1, n-1))
+
+		# Skip %%
+		n += 2
+		s = substr(s, n)
+
+		# Look for second %%
+		n = index(s, "%%")
+		if (n == 0) {
+			printf("Failure: missing closing %% at %s\n", $0)
+			exit 1
+		}
+
+		printf("%s", ENVIRON[substr(s, 1, n-1)])
+
+		# Skip %%
+		n += 2
+		s = substr(s, n)
+	} next; } { print; } ' $2 | $dbg
+}

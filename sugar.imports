@@ -1,0 +1,29 @@
+#!/bin/sh
+
+set -e
+
+# NOTE: imported bin/ files will override those already existing in
+# the $raw/ directory.
+
+# We'll be using set(1) shortly.
+raw=$2
+ready=$3
+
+# No imports file => no-op
+if [ ! -e $raw/imports ]; then exit 0; fi
+
+# Skip comments, empty lines
+grep -vE '^[ \t]*#|^[ \t]*$' $raw/imports | while read x; do
+	# Split fields
+	set -- $x
+
+	# Ensure destination's dirname exists
+	if echo "$2" | grep -q '/$'; then
+		mkdir -p $ready/$2
+	else
+		mkdir -p `dirname $ready/$2`
+	fi
+
+	# Actually import
+	eval "cp -p $1 $ready/$2"
+done

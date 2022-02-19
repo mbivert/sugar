@@ -1,0 +1,424 @@
+.TH SUGAR 1 sugar\-1.0
+.SH Name
+sugar \- a sweeter salt/ansible/chef
+.SH SYNOPSIS
+.B sugar
+.RB [ \-mspq ]
+.RB [ \-d\ str ]
+.RB [ \-r\ user:group ]
+.RB [ \-c\ conf ]
+.IR <server>
+.IR <cmd>
+.RI [ args ...]
+.PP
+.B sugar
+.RB [ \-h ]
+.PP
+.B sugar.mkautos <server> <raw/> <ready/>
+.PP
+.B sugar.imports <server> <raw/> <ready/>
+.PP
+.B . `which sugar.lib`
+
+.SH DESCRIPTION
+.B sugar
+is a simple remote machine administration tool, based on
+.BR ssh(1) ,
+.BR sh(1)
+and
+.BR rsync(1) .
+In essence, it synchronizes server-specific local repositories
+to remote locations, and allows to run commands on said servers,
+eventually wrapped between locally executed hooks.
+
+The code is small and simple, and is likely a more precise
+documentation than this man page.
+
+.SH OPTIONS
+
+.TP
+.B \-m
+Interpret
+.IR server
+as an
+.BR awk(1)
+pattern instead of as a server alias. Perform command on all
+servers matching the pattern.
+
+.TP
+.B \-s
+Automatically synchronize servers' directories before
+running
+.IR cmd .
+
+.TP
+.B \-p
+Only run pre-hooks, including the main pre-hook. Note that
+.BR -s
+is ignored if
+.BR -p
+is specified.
+
+.TP
+.B \-q
+Only run post-hooks, including the main post-hook. Note that
+.BR -s
+is ignored if
+.BR -q
+is specified.
+
+If both
+.BR -p
+and
+.BR -q
+are specified, then pre-hooks are always
+executed before post-hooks.
+
+This is because pre-hooks may setup things that will
+be removed by post-hooks.
+
+.TP
+.B \-d str
+Defines, forward (to hooks and remotely executed scripts), and
+set to
+.BR str
+a
+.BR $DEBUG
+variable.
+Note that
+.BR sugar.lib
+and
+.BR sugar.mkautos
+interpret
+.BR str
+as a list of one-character flags:
+.BR x
+triggers a set -x;
+.BR d
+enables files dumping to stderr in the template system.
+
+.TP
+.B \-r user:group
+Owner and group for remote
+.BR $SUGARD,
+default to root:wheel. Can be overridden by
+setting
+.BR $ROOT
+before starting
+.BR sugar(1).
+
+.TP
+.B \-c conf
+Source
+.BR conf
+if present, so that we can override e.g.
+.BR $PATH,
+.BR $SUGARF,
+.BR $SUGARD,
+.BR $LSUGARD,
+.BR $ROOT.
+
+.TP
+.B \-h
+Display help message
+
+.TP
+.B server
+Describes the server, or the potential servers if \-m has been
+specified, on which to run
+.IR cmd .
+
+.TP
+.B cmd
+Is the name of the executable we want to run.
+
+.TP
+.B args...
+Are
+.IR cmd 's
+arguments.
+
+.SH SUGAR CONFIGURATION FILE
+The file pointed by
+.BR $SUGARF
+is actually a
+.BR ssh(1)
+configuration file, where each host we want to access as
+.IR server
+should be declared as host alias. Default to
+.BR $HOME/.sugarf ,
+which can be overridden by setting the
+.BR $SUGARF
+environment variable before running
+.BR sugar(1) ,
+or through the
+.IR -c
+option.
+
+.SH LOCAL SUGAR DIRECTORY
+Local sugar directory contains two sub-directories:
+.TP
+.BI raw
+contains raw server directories, one per server.
+
+It is common for those directories to be versioned in some
+ways. Symbolic links are, of course, supported and encouraged.
+.TP
+.BI ready
+contains raw server directories adjusted by pre-hooks, one
+per server again.
+
+These are the sub-directories which are synced with remote
+sugar directories, not the raw ones.
+
+.PP
+Directories' names should match aliases defined in
+.BR $SUGARF .
+
+By default, local sugar directory is stored in
+.BR $HOME/.sugard ,
+which can be overridden by setting the
+.BR $LSUGARD
+environment variable before running
+.BR sugar(1) ,
+or through the
+.IR -c
+option.
+
+The format of the server directories located under
+.BR raw
+and
+.BR ready
+is described in the following section.
+
+.SH REMOTE SUGAR DIRECTORY
+The local
+.BR ready
+server directories are synchronized to a remote directory,
+defaulting to
+.BR /var/sugard ,
+which can be overridden by setting the
+.BR $SUGARD
+environment variable before running
+.BR sugar(1) ,
+or through the
+.IR -c
+option.
+
+The format for such directories is the same as the
+.BR raw/*
+and
+.BR ready/*
+directories, and is kept quite simple:
+.TP
+.BI bin/
+special directory that should only contain executables meant
+to be run through
+.BR sugar(1) .
+.BR <name>/
+directory in the corresponding
+.BR ready/
+directory. Pre-hooks shouldn't write anything here.
+.TP
+.BI pre-hook
+main pre-hook script if any; executed if executable only
+.TP
+.BI post-hook
+main post-hook script if any; executed if executable only
+.TP
+.BI *.auto
+describes automatically created commands. They are only taken
+into account if
+.BR sugar.mkautos
+is called, typically in the main
+.BR pre-hook.
+.TP
+imports
+contains a list of files to be imported from other locations
+only used by
+.BR sugar.imports .
+.TP
+.BI config.*,\ config
+are configuration files used for the template system provided
+by
+.BR sugar.lib ;
+.BR config
+is always loaded last, and thus may override default values
+provided by the config.*. They are sourced as
+.BR sh(1)
+scripts; the variables they defined are exported to the
+.BR env(1)
+(set -a).
+
+.SH HOOKS
+Hooks are used to execute local code before/after a command
+has run. As for regular scripts, it is strongly advised to
+make sure that they are idempotent.
+
+They are two kinds of hooks: pre hooks, run before the command,
+and post hooks, run after the command.
+
+The main hooks are executed before/after any commands, when
+they exist as executable files at the root of the
+.BR
+raw/
+directory. Per command hooks are executed before/after the related
+commands.
+
+For a command
+.BR cmd ,
+such per-command hooks are looked in server's
+.BR ready/
+directory under
+.BR bin/hook-pre-cmd
+and
+.BR bin/hook-post-cmd .
+
+Hooks are called with the following arguments:
+
+.TP
+.BI server\ alias
+the server alias as defined in sugar configuration file
+.TP
+.BI raw\ directory
+path to the raw directory for this server
+.TP
+.BI ready\ directory
+path to the ready directory for this server
+
+.PP
+It is common for pre-hooks to copy data from the raw directory
+to the ready directory. Again, note that hooks shouldn't drop
+files in the
+.BR bin/
+directory.
+
+.SH .AUTO FILES
+The .auto files allows the automatic creation of commands
+consisting of a sequence of existing commands.
+
+Each .auto file contains one script name per line, that is
+expected to be found in
+.BR ready/bin/*
+
+For an auto file named
+.BR $cmd.auto ,
+an executable
+.BR ready/bin/$cmd
+will be created, alongside with a
+.BR ready/bin/hook-pre-$cmd
+and a
+.BR ready/bin/hook-post-$cmd
+calling the existing hooks associated to commands described
+in
+.BR $cmd.auto .
+
+By default, the .auto files aren't managed unless
+.BR sugar.mkautos
+is called in the main
+.BR pre-hook.
+
+.SH IMPORTS
+.BR sugar.imports
+provides a basic inheritance mechanism, allowing to share data and code
+between multiple servers with similar setup.
+
+It will look for a
+.BR raw/imports
+files containing a listing of the files to import. Empty lines and
+lines starting with a # are ignored.
+
+Each line have two spaces separated fields:
+.TP
+.BI 1\ -
+A globbing pattern (shell-variable expansion supported) describing
+files to import; better for pattern to contain absolute pathnames
+.TP
+.BI 2\ -
+An optional destination, that will always be interpreted relatively to
+the ready/'s directory. If the destination ends with a /, it will be
+interpreted as a directory. If the destination is missing, the root
+of the ready/ directory will be assumed.
+
+.SH LIB
+.BR sugar.lib
+provides some basic features for
+.BR sh(1)
+written scripts, such as:
+
+.TP
+.BI configuration
+Via the
+.BR loadconfs($1)
+function, that will source all the
+.BR config.*,\ config
+files found in
+.BR $1,
+which default to
+.BR $SUGARD ,
+always finishing with
+.BR config
+which is intended to override default values, while
+the
+.BR ready/config.*
+would typically be imported via
+.BR sugar.imports .
+
+.TP
+.BI templating
+Via the
+.BR samurai($1, $2)
+function, which will load configuration files from
+.BR $1
+via
+.BR loadconfs($1) ,
+and replace in
+.BR $2
+all
+.BR %%variale_name%%
+with
+.BR $variable_name
+from the environment (configuration files), outputting
+its results on stdout.
+.TP
+.BI logging
+Via the
+.BR log($@)
+functions, which will provide a uniform output format, prefixing
+the message
+.BR $@
+with the currently executed script.
+.TP
+.BI OS-agnostic\ wrapper
+Via the
+.BR loadoslib()
+function, which will look for a
+.BR sugar.lib.`uname`
+in the
+.BR $PATH
+and source it if found. By defining a set of interfaces,
+users can write "portable" code.
+
+.SH GLOBAL BEHAVIOR
+The script starts by creating a basic
+.BR ready
+directory,
+.BR rsync(1) -ing
+the
+.BR raw/bin/
+directory to
+.BR ready/bin/ .
+
+It then runs the main pre-hook, per-command pre-hook, synchronize the
+.BR ready
+directory with the remote
+.BR $SUGARD ,
+and finally, run the per-command post-hook, and finally the main post-hook.
+
+It does so for every
+.IR server
+for which we try to run
+.IR cmd .
+
+.SH BUGS
+Do not use spaces in filenames.
