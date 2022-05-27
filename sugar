@@ -143,9 +143,17 @@ lsmatches() {
 #	$2 : server ready directory
 # Output:
 mkready() {
-	mkdir -p $2
+	mkdir -p $2/bin
+
+	# rsync(1) will fail otherwise
+	if [ ! -d $1/bin ]; then return; fi
+
 	rsync -a -zz --delete $1/bin/ $2/bin/
-	chmod +x $2/bin/*
+
+	# $2/bin/ non-empty
+	if ls $2/bin/ | awk '{n=1}END{exit !n}'; then
+		chmod +x $2/bin/*
+	fi
 }
 
 # Synchronize between local ready directory and remote/chroot one for single server.
@@ -203,6 +211,13 @@ posthooks() {
 lsmatches "$p" | while read s; do
 	ready=$LSUGARD/ready/$s
 	raw=$LSUGARD/raw/$s
+
+	# Ensure there's a raw/ directory configured, fail
+	# otherwise (common case is a symbolic link to a
+	# versioned directory).
+	if [ ! -d $raw ]; then
+		fail "no raw directory for $s ($raw)"
+	fi
 
 	# Create/update ready directory from raw directory
 	mkready $raw $ready

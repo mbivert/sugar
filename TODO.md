@@ -51,3 +51,13 @@ be solved by a simple check, and a special debug flag.
 # Parallezisation @parallelize
 We may want to parallelize things when always safe to do so. This
 should be conditional.
+
+# Improved configuration @better-config
+For now, configuration is split in two parts, that are to be
+managed by hand:
+
+	- a bunch of raw/ directories ($SUGARD/raw/)
+	- a special ssh_config(5) ($SUGARF)
+
+Operations such as adding/deleting/updating/renaming an existing
+machine could be automatized to various degrees.
