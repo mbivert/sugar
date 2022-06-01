@@ -3,7 +3,7 @@
 sugar \- a sweeter salt/ansible/chef
 .SH SYNOPSIS
 .B sugar
-.RB [ \-mspq ]
+.RB [ \-mspqa ]
 .RB [ \-d\ str ]
 .RB [ \-r\ user:group ]
 .RB [ \-c\ conf ]
@@ -76,6 +76,19 @@ executed before post-hooks.
 
 This is because pre-hooks may setup things that will
 be removed by post-hooks.
+
+See also
+.BR -a
+below.
+
+.TP
+.B \-a
+Will run the main pre-hook if
+.BR -q
+has been specified, as it would otherwise not be run,
+which can be troublesome for imported (
+.BR sugar.imports )
+post-hooks, which would then not be run, because absent.
 
 .TP
 .B \-d str

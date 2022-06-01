@@ -38,21 +38,24 @@ if [ -z "$LSUGARD" ]; then LSUGARD=$HOME/.sugard; fi
 # Output:
 #	Terminate program
 help() {
-	echo 'sugar [-mspqh] [-d flags] [-r user:group] [-c conf] <server> <cmd> [args...]'
+	echo 'sugar [-mspqah] [-d flags] [-r user:group] [-c conf] <server> <cmd> [args...]'
 	exit $1
 }
 
 match=
 sync=
 prehook=
+posthook=
+mprehook=
 DEBUG=
 conf=
-while getopts mspqhd:r:c: x; do
+while getopts mspqahd:r:c: x; do
 	case $x in
 		m) match=1;;
 		s) sync=1;;
 		p) prehook=1;;
 		q) posthook=1;;
+		a) mprehook=1;;
 		h) help 0;;
 		d) DEBUG="$OPTARG";;
 		r) ROOT="$OPTARG";;
@@ -229,8 +232,13 @@ lsmatches "$p" | while read s; do
 		continue
 	fi
 
-	# Only execute post-hooks
+	# Only execute post-hooks, eventually after the
+	# main pre-hook if specified
 	if [ -n "$posthook" ]; then
+		if [ -n "$mprehook" ]; then
+			mainhook pre     $s $raw $ready
+		fi
+
 		posthooks $1 $s $raw $ready
 		continue
 	fi
