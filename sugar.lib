@@ -331,3 +331,6 @@ mksscert() {
 	chmod 600 $key
 	chmod 444 $crt
 }
+
+# Automatically load a sugar.lib.$OS if it exists
+loadoslib
