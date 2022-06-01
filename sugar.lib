@@ -109,12 +109,13 @@ rmsshlink() {
 #
 # Input:
 #	$1 : URL to check
-#	$2 : expected http code (e.g. 200, 404)
+#	$2 : expected http code (e.g. 200, 404; can be empty)
 #	$3 : optional curl(1) arguments
 # Output:
 checkurl() {
 	x=`curl -A "curl-sugar-tests" $3 -s -I $1 | sed 1q`
-	if ! echo "$x" | grep -q "$2"; then
+	c=`echo $x | awk '{ print $2 }'`
+	if [ "$2" != "$c" ]; then
 		fail "checkurl $1 : got '$x'; expected '$2'"
 	fi
 }
