@@ -112,6 +112,7 @@ rmsshlink() {
 #	$2 : expected http code (e.g. 200, 404; can be empty)
 #	$3 : optional curl(1) arguments
 # Output:
+#	Exit on error
 checkurl() {
 	x=`curl -A "curl-sugar-tests" $3 -s -I $1 | sed 1q`
 	c=`echo $x | awk '{ print $2 }'`
@@ -190,7 +191,7 @@ loadconfs() {
 #	     stored there imported configuration files.
 #	$2 : configuration file to process
 # Output:
-#	$2 templatized with the value from $2/config*
+#	$2 templatized with the value from $2/config*, on stdout
 samurai() {
 	set -a; loadconfs $1; set +a
 
@@ -275,6 +276,40 @@ skipec() {
 		/^$/       { next; }
 		1
 	' $1
+}
+
+# Check URLs described in the given file.
+#
+# Input:
+#	$1 : file containing URLs to check
+#	$2 : optional directory containing config* files; if
+#	specified, $1 will be first processed by samurai.
+# Output:
+#	Exit on first error
+checkurls() {
+	o=
+	(
+		if [ -z "$2" ]; then
+			cat $1
+		else
+			samurai $2 $1
+		fi
+	) | while read x; do
+		# Special comment to set temporary curl arguments
+		if echo "$x" | grep -q '^# opts:'; then
+			o=`echo $x | sed 's/^.......//'`
+			continue
+		fi
+		# Skip comments/empty lines
+		if echo "$x" | sed 's/^#.*//' | grep -q '^$'; then
+			continue
+		fi
+		set -- $x
+
+		# NOTE: we allow $2 to be empty (e.g. relayd(8) blocked requests)
+		log Testing $1 HTTP access "($2)"...
+		checkurl "$1" "$2" "$o"
+	done
 }
 
 # Create a self-signed TLS certificate, for a given domain name.
