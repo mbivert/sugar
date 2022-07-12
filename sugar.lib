@@ -124,6 +124,13 @@ checkurl() {
 # Retrieve TLS certificate owner for tls given domain,
 # assuming connection on 443 port.
 #
+# NOTE: openssl(1) seems to always run interactively and
+# consumes stdin: this is problematic in situation where
+# gettlsissuer is called in a `... | while read x; do ... done`
+# loop, as the loop's input will get consumed by openssl(1).
+#
+# Hence why we're forcing it to work from /dev/null.
+#
 # Input:
 #	$1 : domain (e.g. mbivert.eu)
 # Output:
@@ -131,7 +138,7 @@ checkurl() {
 #		issuer=C = US, O = Let's Encrypt, CN = R3
 gettlsissuer() {
 #	curl -A "curl-sugar-tests" --insecure -vvI https://$1 2>&1 | grep '^\*  issuer:'
-	openssl s_client -showcerts -connect $1:443 2>&1 | grep '^issuer'
+	openssl s_client -showcerts -connect $1:443 2>&1 </dev/null | grep '^issuer'
 }
 
 # Ensure we have 3 non-empty arguments for hooks.
