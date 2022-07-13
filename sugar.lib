@@ -43,7 +43,7 @@ logerr() {
 # Input:
 #	$* : command to run
 quietrun() {
-	fn=/tmp/quietrun.$$
+	fn=`mktemp /tmp/quietrun.$$.XXXXXX`
 	if ! $* > $fn 2>&1; then cat $fn; rm $fn; exit 1; fi
 	rm $fn
 }
